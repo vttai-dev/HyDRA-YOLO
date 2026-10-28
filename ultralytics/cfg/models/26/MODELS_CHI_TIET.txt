@@ -1,0 +1,220 @@
+================================================================================
+CHI TIET CAC MODEL TRONG ultralytics/cfg/models/26
+================================================================================
+
+Cay quan he ablation:
+
+A0  yolo26.yaml                          YOLO26 goc
+ └─ A1  yolo26-dyn.yaml                  + DynamicConv
+      ├─ A2  yolo26-ablate-carafe.yaml   + CARAFE (head PAN thuong)
+      ├─ A3  yolo26-ablate-hace.yaml     + HyperACE_Dyn + FullPAD (nearest)
+      └─ Ideal  yolo26-ideal.yaml        A3 + CARAFE  <- mo hinh de xuat
+           A4  yolo26-ablate-hace-dsc.yaml
+               giong Ideal, nhung HyperACE (low-order = DSC3k)
+
+
+--------------------------------------------------------------------------------
+CAC KHOI DUNG CHUNG
+--------------------------------------------------------------------------------
+
+DynamicConv
+  CondConv co routing: GAP -> Linear -> sigmoid -> tron num_experts=4 kernel.
+  File: nn/modules/addModules/DynamicConvolution.py
+
+C3k2_DynamicConv
+  Thay C3k2. Bottleneck ben trong dung DynamicConv thay vi Conv thuong.
+
+CARAFE
+  Upsample theo noi dung, x2. Thay nn.Upsample nearest.
+  File: nn/modules/addModules/Variants.py
+
+HyperACE
+  Fusion da ti le kieu YOLOv13.
+  Luon co 2 nhom nhanh:
+    - High-order: 2 x C3AH (hypergraph)
+    - Low-order: DSC3k (neu dsc3k=True) hoac DSBottleneck (neu False)
+  File: nn/modules/block.py
+
+HyperACE_Dyn
+  Cung API va cung wiring voi HyperACE.
+  High-order van la 2 x C3AH.
+  Low-order doi thanh C3k_DynamicConv (use_c3k=True) hoac Bottleneck_DynamicConv.
+  File: nn/modules/block.py
+
+FullPAD_Tunnel
+  Cong residual: x0 + gate * x1. Gate khoi tao 0.
+
+DownsampleConv
+  AvgPool2d + Conv 1x1, dung cho tunnel xuong ti le.
+
+
+Args HyperACE / HyperACE_Dyn trong YAML:
+  [512, 4, True, True, 0.25, 1, "both"]
+
+  c2 = 512
+  num_hyperedges = 4   (scale n: parse_model nhan 0.5 -> 2 hyperedges)
+  c3k / dsc3k = True
+  shortcut = True
+  e1 = 0.25
+  e2 = 1
+  context = "both"
+
+  Input layers: [4, 6, 10] = P3, P4, P5 cua backbone.
+
+
+Trong HyperACE / HyperACE_Dyn luon co CA HAI nhom nhanh.
+Ideal va A4 KHAC nhau o nhom low-order, KHONG khac o high-order:
+
+  Ideal / A3: low-order = C3k_DynamicConv   (module HyperACE_Dyn)
+  A4:         low-order = DSC3k              (module HyperACE)
+
+
+--------------------------------------------------------------------------------
+A0 — yolo26.yaml (baseline)
+--------------------------------------------------------------------------------
+
+YOLO26 goc Ultralytics, end-to-end, Detect P3/P4/P5.
+Khong gan Dyn, CARAFE, HyperACE, FullPAD.
+
+  Backbone: Conv + C3k2 + SPPF + C2PSA
+  Head: PAN co dien
+    Upsample nearest -> Concat backbone -> C3k2 (x2 len)
+    downsample Conv -> Concat -> Detect
+
+
+--------------------------------------------------------------------------------
+A1 — yolo26-dyn.yaml (+ DynamicConv)
+--------------------------------------------------------------------------------
+
+Cung topology A0. Moi C3k2 -> C3k2_DynamicConv (backbone + head).
+Upsample van nearest.
+Khong HyperACE, FullPAD, CARAFE.
+
+Muc dich: do rieng DynamicConv.
+
+
+--------------------------------------------------------------------------------
+A2 — yolo26-ablate-carafe.yaml (Dyn + CARAFE)
+--------------------------------------------------------------------------------
+
+A1 + thay upsample bang CARAFE. Head van PAN thuong.
+
+  Backbone: C3k2_DynamicConv nhu A1
+  Head: 2 cho upsample = CARAFE [2]
+  Van Concat voi P4/P3 roi C3k2_DynamicConv
+  KHONG co HyperACE, FullPAD, DownsampleConv
+
+Muc dich: do rieng CARAFE tren nen Dyn.
+
+
+--------------------------------------------------------------------------------
+A3 — yolo26-ablate-hace.yaml (Dyn + HyperACE_Dyn + FullPAD, khong CARAFE)
+--------------------------------------------------------------------------------
+
+Doi head sang kieu YOLOv13 FullPAD. Upsample van nearest.
+
+Head:
+  1. HyperACE_Dyn([4,6,10])
+     high-order = 2 x C3AH
+     low-order  = C3k_DynamicConv
+     4 edges (YAML), e1=0.25 -> layer 11
+  2. Upsample nearest (12) + DownsampleConv (13) tu layer 11
+  3. FullPAD tunnels khoi tao:
+       [6,11]  -> tunnel 14 (P4 + HyperACE)
+       [4,12]  -> tunnel 15 (P3 + up)
+       [10,13] -> tunnel 16 (P5 + down)
+  4. PAN: upsample -> Concat tunnel -> C3k2_DynamicConv,
+     roi tunnel lai voi HyperACE / feature da enhance
+  5. Detect lay [25, 29, 33]
+
+Muc dich: do HyperACE_Dyn + FullPAD khi chua co CARAFE.
+
+
+--------------------------------------------------------------------------------
+Ideal — yolo26-ideal.yaml (mo hinh de xuat)
+--------------------------------------------------------------------------------
+
+A3 + thay moi upsample bang CARAFE.
+Alias cu: yolo26-ideal-hace-dynlo.yaml
+
+  Dyn backbone     C3k2_DynamicConv nhu A1
+  HyperACE_Dyn     [4,6,10], 4 edges, e1=0.25
+                   high-order = 2 x C3AH
+                   low-order  = C3k_DynamicConv
+  CARAFE           3 cho upsample (thay nearest cua A3)
+  FullPAD          FullPAD_Tunnel nhu A3
+  Neck             C3k2_DynamicConv sau Concat
+  Detect           [25, 29, 33] qua tunnel
+
+
+--------------------------------------------------------------------------------
+A4 — yolo26-ablate-hace-dsc.yaml
+--------------------------------------------------------------------------------
+
+Topology giong het Ideal. Chi doi 1 dong module HyperACE.
+
+Ideal:
+  HyperACE_Dyn, [512, 4, True, True, 0.25, 1, "both"]
+  low-order = C3k_DynamicConv
+
+A4:
+  HyperACE,     [512, 4, True, True, 0.25, 1, "both"]
+  low-order = DSC3k
+
+Giu nguyen:
+  Backbone Dyn
+  CARAFE
+  FullPAD
+  High-order hypergraph (2 x C3AH)
+
+Muc dich: so Dyn vs DSC ben trong HyperACE, moi thu khac giu nguyen.
+
+
+--------------------------------------------------------------------------------
+BANG CO / KHONG
+--------------------------------------------------------------------------------
+
+Thanh phan                  A0   A1   A2   A3   Ideal   A4
+------------------------   --   --   --   --   -----   --
+Backbone Dyn                    X    X    X    X       X
+CARAFE                               X         X       X
+HyperACE high-order (C3AH)               X    X       X
+Low-order Dyn (C3k_Dyn)                  X    X
+Low-order DSC3k (HyperACE)                           X
+FullPAD tunnels                          X    X       X
+Head PAN co dien (khong FullPAD)  X  X  X
+
+
+Doc bang:
+  - A0, A1, A2: head PAN cu, khong HyperACE, khong FullPAD.
+  - A3, Ideal, A4: head FullPAD, co high-order hypergraph.
+  - HyperACE (DSC) CHI co o A4.
+  - HyperACE_Dyn (low-order Dyn) CHI co o A3 va Ideal.
+  - Ideal va A4 cung full stack; chi khac nhom low-order.
+
+
+--------------------------------------------------------------------------------
+LOGIC ABLATION
+--------------------------------------------------------------------------------
+
+  A1 - A0     = DynamicConv
+  A2 - A1     = CARAFE
+  A3 - A1     = HyperACE_Dyn + FullPAD
+  Ideal - A3  = CARAFE tren stack HyperACE
+  Ideal - A4  = low-order Dyn vs low-order DSC3k
+                (high-order, CARAFE, FullPAD, backbone giu nguyen)
+
+
+--------------------------------------------------------------------------------
+YAML DA XOA / GOP (ABLATION.md)
+--------------------------------------------------------------------------------
+
+  yolo26-ideal-hace-dynlo.yaml -> gop vao yolo26-ideal.yaml
+  yolo26-ideal-carafe-hace*.yaml, yolo26-ideal-spdp3-carafe.yaml
+  yolo26-dyn-spd*.yaml
+  yolo26-dyn-carafe.yaml -> yolo26-ablate-carafe.yaml
+  yolo26-hyperace*.yaml
+
+================================================================================
+Nguon: ABLATION.md, YAML models/26, block.py, tasks.py. Khong ghi so lieu ket qua.
+================================================================================

@@ -1,0 +1,4 @@
+IDEAL=yolo26-ideal.yaml
+HyperACE_Dyn + CARAFE + FullPAD + Dyn backbone
+PPE2025 test mAP50≈0.690 (vs YOLO26n 0.687)
+Ablation set: see ABLATION.md
