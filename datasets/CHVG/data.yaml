@@ -1,0 +1,14 @@
+path: .
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 8
+names: ['blue', 'glass', 'head', 'person', 'red', 'vest', 'white', 'yellow']
+
+roboflow:
+  workspace: scalersai
+  project: chvg-conversion
+  version: 3
+  license: MIT
+  url: https://universe.roboflow.com/scalersai/chvg-conversion/dataset/3

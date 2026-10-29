@@ -1,0 +1,14 @@
+path: .
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 4
+names: ['gloves', 'harness', 'helmet', 'shoes']
+
+roboflow:
+  workspace: genius-rtnnb
+  project: cppe
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/genius-rtnnb/cppe/dataset/2
